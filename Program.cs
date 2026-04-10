@@ -274,7 +274,7 @@ app.MapGet("/content/{assetId}/download-url", (HttpContext ctx, string assetId) 
     if (asset is null)
         return Results.NotFound();
 
-    var url = asset.MimeType == "text/plain"
+    var url = string.IsNullOrEmpty(asset.DownloadUrl)
         ? $"{BaseUrl(ctx)}/text-files/{asset.Id}"
         : asset.DownloadUrl;
 
