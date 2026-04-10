@@ -75,25 +75,30 @@ var textAssets = new Asset[]
 // ---------------------------------------------------------------------------
 // POST /oauth/token
 // ---------------------------------------------------------------------------
-app.MapPost("/oauth/token", ([FromForm] OAuthTokenRequest req) =>
+app.MapPost("/oauth/token", async (HttpRequest httpReq) =>
 {
-    if (req.grant_type == "client_credentials")
-    {
-        return Results.Ok(IssueToken());
-    }
+    IFormCollection form;
+    try { form = await httpReq.ReadFormAsync(); }
+    catch { return Results.BadRequest(new { error = "invalid_request", error_description = "Expected application/x-www-form-urlencoded body." }); }
 
-    if (req.grant_type == "authorization_code")
+    var grantType   = form["grant_type"].ToString();
+    var code        = form["code"].ToString();
+    var codeVerifier = form["code_verifier"].ToString();
+
+    if (grantType == "client_credentials")
+        return Results.Ok(IssueToken());
+
+    if (grantType == "authorization_code")
     {
-        if (req.code is null || !pendingCodes.TryRemove(req.code, out var pending))
+        if (string.IsNullOrEmpty(code) || !pendingCodes.TryRemove(code, out var pending))
             return Results.BadRequest(new { error = "invalid_grant", error_description = "Unknown or expired authorization code." });
 
-        // PKCE verification
         if (pending.CodeChallenge is not null)
         {
-            if (req.code_verifier is null)
+            if (string.IsNullOrEmpty(codeVerifier))
                 return Results.BadRequest(new { error = "invalid_grant", error_description = "code_verifier is required for PKCE." });
 
-            var computed = ComputeS256Challenge(req.code_verifier);
+            var computed = ComputeS256Challenge(codeVerifier);
             if (!string.Equals(computed, pending.CodeChallenge, StringComparison.Ordinal))
                 return Results.BadRequest(new { error = "invalid_grant", error_description = "code_verifier does not match code_challenge." });
         }
@@ -165,19 +170,24 @@ app.MapGet("/oauth/authorize", (
 // ---------------------------------------------------------------------------
 // POST /oauth/authorize/callback
 // ---------------------------------------------------------------------------
-app.MapPost("/oauth/authorize/callback", ([FromForm] AuthorizeCallbackRequest req) =>
+app.MapPost("/oauth/authorize/callback", async (HttpRequest httpReq) =>
 {
-    if (string.IsNullOrWhiteSpace(req.redirect_uri))
+    var form = await httpReq.ReadFormAsync();
+    var redirectUri        = form["redirect_uri"].ToString();
+    var state              = form["state"].ToString();
+    var codeChallenge      = form["code_challenge"].ToString();
+    var codeChallengeMethod = form["code_challenge_method"].ToString();
+
+    if (string.IsNullOrWhiteSpace(redirectUri))
         return Results.BadRequest("redirect_uri is required");
 
     var code = GenerateCode();
-    var pending = new PendingAuth(
-        string.IsNullOrEmpty(req.code_challenge) ? null : req.code_challenge,
-        req.code_challenge_method);
-    pendingCodes[code] = pending;
+    pendingCodes[code] = new PendingAuth(
+        string.IsNullOrEmpty(codeChallenge) ? null : codeChallenge,
+        codeChallengeMethod);
 
-    var sep = req.redirect_uri.Contains('?') ? '&' : '?';
-    var location = $"{req.redirect_uri}{sep}code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(req.state ?? "")}";
+    var sep = redirectUri.Contains('?') ? '&' : '?';
+    var location = $"{redirectUri}{sep}code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(state)}";
     return Results.Redirect(location);
 })
 .DisableAntiforgery();
@@ -315,16 +325,3 @@ record ContentResponse(ContentItem[] content, int contentCount, int offset);
 record DownloadUrlResponse(string downloadUrl);
 record OAuthTokenResponse(string access_token, string token_type, int expires_in);
 
-record OAuthTokenRequest(
-    string? grant_type,
-    string? client_id,
-    string? client_secret,
-    string? code,
-    string? redirect_uri,
-    string? code_verifier);
-
-record AuthorizeCallbackRequest(
-    string? redirect_uri,
-    string? state,
-    string? code_challenge,
-    string? code_challenge_method);
