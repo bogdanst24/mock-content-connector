@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: mock-content-connector
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: ASPNETCORE_URLS
+        value: http://+:10000
+      - key: PORT
+        value: 10000
