@@ -251,6 +251,25 @@ app.MapGet("/content/{assetId}/download-url", (HttpContext ctx, string assetId) 
 });
 
 // ---------------------------------------------------------------------------
+// GET /debug  — shows the last /content request received (no auth required)
+// ---------------------------------------------------------------------------
+app.MapGet("/debug", (HttpContext ctx) =>
+{
+    var headers = ctx.Request.Headers
+        .ToDictionary(h => h.Key, h => h.Value.ToString());
+    var query = ctx.Request.QueryString.Value ?? "";
+    var hasValidToken = IsAuthorized(ctx, issuedTokens);
+    return Results.Ok(new
+    {
+        query,
+        headers,
+        tokenCount = issuedTokens.Count,
+        hasValidToken,
+        pendingCodeCount = pendingCodes.Count,
+    });
+});
+
+// ---------------------------------------------------------------------------
 // GET /text-files/{id}  — serves raw text content (no auth, it's a download URL)
 // ---------------------------------------------------------------------------
 app.MapGet("/text-files/{id}", (string id) =>
@@ -277,7 +296,9 @@ static bool IsAuthorized(HttpContext ctx, ConcurrentDictionary<string, bool> tok
 
 OAuthTokenResponse IssueToken()
 {
-    var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    // URL-safe token — no +/= characters that could get mangled in Authorization headers
+    var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+        .Replace('+', '-').Replace('/', '_').TrimEnd('=');
     issuedTokens[token] = true;
     return new OAuthTokenResponse(token, "Bearer", 3600);
 }
@@ -311,16 +332,11 @@ record Asset(
     string DownloadUrl,
     string[] Tags)
 {
-    public ContentItem ToContentItem(string baseUrl)
-    {
-        var preview = MimeType == "text/plain"
-            ? PreviewUrl
-            : PreviewUrl;
-        return new ContentItem(Id, Name, MimeType, preview, string.Join(",", Tags));
-    }
+    public ContentItem ToContentItem(string baseUrl) =>
+        new(Id, Name, MimeType, PreviewUrl, string.Join(",", Tags), Name);
 }
 
-record ContentItem(string id, string name, string mimeType, string previewUrl, string tags);
+record ContentItem(string id, string name, string mimeType, string previewUrl, string tags, string? altText);
 record ContentResponse(ContentItem[] content, int contentCount, int offset);
 record DownloadUrlResponse(string downloadUrl);
 record OAuthTokenResponse(string access_token, string token_type, int expires_in);
