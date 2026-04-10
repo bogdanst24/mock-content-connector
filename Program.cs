@@ -203,16 +203,24 @@ app.MapGet("/content", (
     [FromQuery] string? search = null,
     [FromQuery] string? parentId = null) =>
 {
-    if (!IsAuthorized(ctx, issuedTokens))
-        return Results.Unauthorized();
+    Console.WriteLine($"[/content] contentType={contentType} skip={skip} limit={limit} search={search} auth={ctx.Request.Headers.Authorization}");
 
-    IEnumerable<Asset> source = contentType switch
+    if (!IsAuthorized(ctx, issuedTokens))
+    {
+        Console.WriteLine($"[/content] UNAUTHORIZED — token not found in store (store has {issuedTokens.Count} tokens)");
+        return Results.Unauthorized();
+    }
+
+    // Case-insensitive match so "Image", "image", "IMAGE" all work
+    IEnumerable<Asset> source = contentType?.ToLowerInvariant() switch
     {
         "image"       => imageAssets,
-        "textElement" => textAssets,
+        "textelement" => textAssets,
         null          => [.. imageAssets, .. textAssets],
-        _             => [],
+        var other     => (IEnumerable<Asset>)[],  // log unknown types
     };
+
+    Console.WriteLine($"[/content] matched {source.Count()} assets for contentType={contentType}");
 
     if (!string.IsNullOrWhiteSpace(search))
     {
