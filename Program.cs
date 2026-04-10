@@ -395,8 +395,12 @@ static string ComputeS256Challenge(string codeVerifier)
     return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
-static string BaseUrl(HttpContext ctx) =>
-    $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+static string BaseUrl(HttpContext ctx)
+{
+    var proto = ctx.Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? ctx.Request.Scheme;
+    var host  = ctx.Request.Headers["X-Forwarded-Host"].FirstOrDefault()  ?? ctx.Request.Host.ToString();
+    return $"{proto}://{host}";
+}
 
 static string HtmlEncode(string value) =>
     System.Net.WebUtility.HtmlEncode(value);
