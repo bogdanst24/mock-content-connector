@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.Mime;
 using System.Security.Cryptography;
 using System.Text;
@@ -61,18 +62,20 @@ var textContents = new Dictionary<string, string>
     ["txt-10"] = "Dear [Customer Name],\n\nThank you for choosing Acme Corp. We value your partnership and are committed to ensuring your success with our platform.\n\nWarm regards,\nThe Acme Corp Team",
 };
 
+const string DocxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
 var textAssets = new Asset[]
 {
-    new("txt-1",  "Company Overview",         "text/plain", "https://placehold.co/300x200/e8f4fd/1a56db?text=Company+Overview",     string.Empty, ["company", "overview", "about"]),
-    new("txt-2",  "Confidentiality Notice",   "text/plain", "https://placehold.co/300x200/fdf8e8/b45309?text=Confidentiality",      string.Empty, ["legal", "confidential", "notice"]),
-    new("txt-3",  "Privacy Policy Intro",     "text/plain", "https://placehold.co/300x200/f0fdf4/166534?text=Privacy+Policy",       string.Empty, ["legal", "privacy", "gdpr"]),
-    new("txt-4",  "Terms of Service",         "text/plain", "https://placehold.co/300x200/fdf4ff/6b21a8?text=Terms+of+Service",     string.Empty, ["legal", "terms", "agreement"]),
-    new("txt-5",  "Marketing Tagline",        "text/plain", "https://placehold.co/300x200/fff7ed/c2410c?text=Tagline",              string.Empty, ["marketing", "brand", "tagline"]),
-    new("txt-6",  "Product Description",      "text/plain", "https://placehold.co/300x200/eff6ff/1d4ed8?text=Product+Description",  string.Empty, ["product", "description", "marketing"]),
-    new("txt-7",  "Contact Information",      "text/plain", "https://placehold.co/300x200/f0fdf4/14532d?text=Contact+Info",        string.Empty, ["contact", "info", "support"]),
-    new("txt-8",  "Proposal Disclaimer",      "text/plain", "https://placehold.co/300x200/fff1f2/9f1239?text=Disclaimer",           string.Empty, ["legal", "proposal", "disclaimer"]),
-    new("txt-9",  "Q3 Results Summary",       "text/plain", "https://placehold.co/300x200/f0fdf4/166534?text=Q3+Results",          string.Empty, ["financial", "results", "quarterly"]),
-    new("txt-10", "Customer Email Template",  "text/plain", "https://placehold.co/300x200/fef9c3/854d0e?text=Email+Template",       string.Empty, ["email", "template", "customer"]),
+    new("txt-1",  "Company Overview",         DocxMime, "https://placehold.co/300x200/e8f4fd/1a56db?text=Company+Overview",     string.Empty, ["company", "overview", "about"]),
+    new("txt-2",  "Confidentiality Notice",   DocxMime, "https://placehold.co/300x200/fdf8e8/b45309?text=Confidentiality",      string.Empty, ["legal", "confidential", "notice"]),
+    new("txt-3",  "Privacy Policy Intro",     DocxMime, "https://placehold.co/300x200/f0fdf4/166534?text=Privacy+Policy",       string.Empty, ["legal", "privacy", "gdpr"]),
+    new("txt-4",  "Terms of Service",         DocxMime, "https://placehold.co/300x200/fdf4ff/6b21a8?text=Terms+of+Service",     string.Empty, ["legal", "terms", "agreement"]),
+    new("txt-5",  "Marketing Tagline",        DocxMime, "https://placehold.co/300x200/fff7ed/c2410c?text=Tagline",              string.Empty, ["marketing", "brand", "tagline"]),
+    new("txt-6",  "Product Description",      DocxMime, "https://placehold.co/300x200/eff6ff/1d4ed8?text=Product+Description",  string.Empty, ["product", "description", "marketing"]),
+    new("txt-7",  "Contact Information",      DocxMime, "https://placehold.co/300x200/f0fdf4/14532d?text=Contact+Info",        string.Empty, ["contact", "info", "support"]),
+    new("txt-8",  "Proposal Disclaimer",      DocxMime, "https://placehold.co/300x200/fff1f2/9f1239?text=Disclaimer",           string.Empty, ["legal", "proposal", "disclaimer"]),
+    new("txt-9",  "Q3 Results Summary",       DocxMime, "https://placehold.co/300x200/f0fdf4/166534?text=Q3+Results",          string.Empty, ["financial", "results", "quarterly"]),
+    new("txt-10", "Customer Email Template",  DocxMime, "https://placehold.co/300x200/fef9c3/854d0e?text=Email+Template",       string.Empty, ["email", "template", "customer"]),
 };
 
 // ---------------------------------------------------------------------------
@@ -291,17 +294,75 @@ app.MapGet("/debug", () =>
     Results.Ok(new { tokenCount = issuedTokens.Count, pendingCodeCount = pendingCodes.Count }));
 
 // ---------------------------------------------------------------------------
-// GET /text-files/{id}  — serves raw text content (no auth, it's a download URL)
+// GET /text-files/{id}  — serves a minimal DOCX containing the text content
 // ---------------------------------------------------------------------------
 app.MapGet("/text-files/{id}", (string id) =>
 {
     if (!textContents.TryGetValue(id, out var content))
         return Results.NotFound();
 
-    return Results.Text(content, "text/plain", Encoding.UTF8);
+    var docxBytes = CreateDocx(content);
+    return Results.File(docxBytes, DocxMime, $"{id}.docx");
 });
 
 app.Run();
+
+// ---------------------------------------------------------------------------
+// DOCX generation — minimal valid .docx (ZIP of XML files, no extra packages)
+// ---------------------------------------------------------------------------
+static byte[] CreateDocx(string text)
+{
+    // Escape XML special characters
+    var xml = text
+        .Replace("&", "&amp;")
+        .Replace("<", "&lt;")
+        .Replace(">", "&gt;")
+        .Replace("\"", "&quot;")
+        .Replace("'", "&apos;");
+
+    using var ms = new MemoryStream();
+    using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+    {
+        Write(zip, "[Content_Types].xml", """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+              <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+              <Default Extension="xml" ContentType="application/xml"/>
+              <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+            </Types>
+            """);
+
+        Write(zip, "_rels/.rels", """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+            </Relationships>
+            """);
+
+        Write(zip, "word/_rels/document.xml.rels", """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>
+            """);
+
+        Write(zip, "word/document.xml", $"""
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p><w:r><w:t xml:space="preserve">{xml}</w:t></w:r></w:p>
+              </w:body>
+            </w:document>
+            """);
+    }
+    return ms.ToArray();
+
+    static void Write(ZipArchive zip, string path, string content)
+    {
+        var entry = zip.CreateEntry(path, CompressionLevel.Optimal);
+        using var s = entry.Open();
+        var bytes = Encoding.UTF8.GetBytes(content.Trim());
+        s.Write(bytes);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
