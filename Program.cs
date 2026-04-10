@@ -21,6 +21,9 @@ var pendingCodes = new ConcurrentDictionary<string, PendingAuth>();
 // Valid issued access tokens
 var issuedTokens = new ConcurrentDictionary<string, bool>();
 
+// Last 20 recorded requests to /content for diagnostics
+var recentContentRequests = new System.Collections.Generic.Queue<object>();
+
 // ---------------------------------------------------------------------------
 // Image assets — picsum.photos serves stable, freely-usable images by ID.
 // ---------------------------------------------------------------------------
@@ -203,13 +206,32 @@ app.MapGet("/content", (
     [FromQuery] string? search = null,
     [FromQuery] string? parentId = null) =>
 {
-    Console.WriteLine($"[/content] contentType={contentType} skip={skip} limit={limit} search={search} auth={ctx.Request.Headers.Authorization}");
+    var authHeader = ctx.Request.Headers.Authorization.ToString();
+    var allQueryParams = ctx.Request.QueryString.Value ?? "";
+    var authorized = IsAuthorized(ctx, issuedTokens);
 
-    if (!IsAuthorized(ctx, issuedTokens))
+    // Record this request so /debug/requests can show it
+    lock (recentContentRequests)
     {
-        Console.WriteLine($"[/content] UNAUTHORIZED — token not found in store (store has {issuedTokens.Count} tokens)");
-        return Results.Unauthorized();
+        recentContentRequests.Enqueue(new
+        {
+            time = DateTime.UtcNow,
+            queryString = allQueryParams,
+            contentType,
+            skip,
+            limit,
+            search,
+            parentId,
+            authHeader = authHeader.Length > 30 ? authHeader[..30] + "…" : authHeader,
+            authorized,
+            tokenStoreCount = issuedTokens.Count,
+        });
+        while (recentContentRequests.Count > 20)
+            recentContentRequests.Dequeue();
     }
+
+    if (!authorized)
+        return Results.Unauthorized();
 
     // Case-insensitive match so "Image", "image", "IMAGE" all work
     IEnumerable<Asset> source = contentType?.ToLowerInvariant() switch
@@ -217,10 +239,8 @@ app.MapGet("/content", (
         "image"       => imageAssets,
         "textelement" => textAssets,
         null          => [.. imageAssets, .. textAssets],
-        var other     => (IEnumerable<Asset>)[],  // log unknown types
+        _             => [.. imageAssets, .. textAssets], // unknown type → return everything
     };
-
-    Console.WriteLine($"[/content] matched {source.Count()} assets for contentType={contentType}");
 
     if (!string.IsNullOrWhiteSpace(search))
     {
@@ -259,23 +279,16 @@ app.MapGet("/content/{assetId}/download-url", (HttpContext ctx, string assetId) 
 });
 
 // ---------------------------------------------------------------------------
-// GET /debug  — shows the last /content request received (no auth required)
+// GET /debug/requests  — shows the last 20 /content requests (no auth required)
 // ---------------------------------------------------------------------------
-app.MapGet("/debug", (HttpContext ctx) =>
+app.MapGet("/debug/requests", () =>
 {
-    var headers = ctx.Request.Headers
-        .ToDictionary(h => h.Key, h => h.Value.ToString());
-    var query = ctx.Request.QueryString.Value ?? "";
-    var hasValidToken = IsAuthorized(ctx, issuedTokens);
-    return Results.Ok(new
-    {
-        query,
-        headers,
-        tokenCount = issuedTokens.Count,
-        hasValidToken,
-        pendingCodeCount = pendingCodes.Count,
-    });
+    lock (recentContentRequests)
+        return Results.Ok(recentContentRequests.Reverse().ToArray());
 });
+
+app.MapGet("/debug", () =>
+    Results.Ok(new { tokenCount = issuedTokens.Count, pendingCodeCount = pendingCodes.Count }));
 
 // ---------------------------------------------------------------------------
 // GET /text-files/{id}  — serves raw text content (no auth, it's a download URL)
