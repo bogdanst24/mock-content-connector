@@ -92,7 +92,7 @@ app.MapPost("/oauth/token", async (HttpRequest httpReq) =>
     var codeVerifier = form["code_verifier"].ToString();
 
     if (grantType == "client_credentials")
-        return Results.Ok(IssueToken());
+        return Results.BadRequest(new { error = "invalid_client", error_description = "Temporary forced 400 for testing." });
 
     if (grantType == "authorization_code")
     {
